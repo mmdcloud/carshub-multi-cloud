@@ -1,0 +1,6 @@
+infra/terraform/environments/prod/aws/.terraform*/
+infra/terraform/environments/prod/aws/terraform.*/
+infra/terraform/environments/dev/aws/.terraform*/
+infra/terraform/environments/dev/aws/terraform.*/
+infra/terraform/environments/staging/aws/.terraform*/
+infra/terraform/environments/staging/aws/terraform.*/
