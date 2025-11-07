@@ -268,7 +268,6 @@ module "carshub_backend_container_registry" {
 # -----------------------------------------------------------------------------------------
 # RDS Instance
 # -----------------------------------------------------------------------------------------
-# IAM Role for Enhanced Monitoring
 resource "aws_iam_role" "rds_monitoring_role" {
   name = "carshub-rds-monitoring-role-${var.env}-${var.region}"
   assume_role_policy = jsonencode({
@@ -290,10 +289,9 @@ resource "aws_iam_role_policy_attachment" "rds_monitoring_policy" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonRDSEnhancedMonitoringRole"
 }
 
-
 module "carshub_db" {
   source                          = "../../../modules/database/aws-rds"
-  db_name                         = "carshubdb${var.env}useast1"
+  db_name                         = "carshubdb${var.env}${var.region}"
   allocated_storage               = 100
   storage_type                    = "gp3"
   engine                          = "mysql"
@@ -307,9 +305,9 @@ module "carshub_db" {
   backup_retention_period         = 35
   backup_window                   = "03:00-06:00"
   subnet_group_ids = [
-    module.carshub_private_subnets.subnets[0].id,
-    module.carshub_private_subnets.subnets[1].id,
-    module.carshub_private_subnets.subnets[2].id
+    module.carshub_vpc.private_subnets[0],
+    module.carshub_vpc.private_subnets[1],
+    module.carshub_vpc.private_subnets[2]
   ]
   vpc_security_group_ids                = [module.carshub_rds_sg.id]
   publicly_accessible                   = false
@@ -676,8 +674,8 @@ module "carshub_frontend_lb" {
   source                     = "terraform-aws-modules/alb/aws"
   name                       = "carshub-frontend-lb-${var.env}-${var.region}"
   load_balancer_type         = "application"
-  vpc_id                     = module.vpc.vpc_id
-  subnets                    = module.vpc.public_subnets
+  vpc_id                     = module.carshub_vpc.vpc_id
+  subnets                    = module.carshub_vpc.public_subnets
   enable_deletion_protection = false
   drop_invalid_header_fields = true
   ip_address_type            = "ipv4"
@@ -723,8 +721,8 @@ module "carshub_backend_lb" {
   source                     = "terraform-aws-modules/alb/aws"
   name                       = "carshub-backend-lb-${var.env}-${var.region}"
   load_balancer_type         = "application"
-  vpc_id                     = module.vpc.vpc_id
-  subnets                    = module.vpc.public_subnets
+  vpc_id                     = module.carshub_vpc.vpc_id
+  subnets                    = module.carshub_vpc.public_subnets
   enable_deletion_protection = false
   drop_invalid_header_fields = true
   ip_address_type            = "ipv4"
@@ -886,8 +884,8 @@ module "ecs" {
           container_port   = 3000
         }
       }
-      subnet_ids                    = module.vpc.private_subnets
-      vpc_id                        = module.vpc.vpc_id
+      subnet_ids                    = module.carshub_vpc.private_subnets
+      vpc_id                        = module.carshub_vpc.vpc_id
       availability_zone_rebalancing = "ENABLED"
     }
 
@@ -983,8 +981,8 @@ module "ecs" {
           container_port   = 80
         }
       }
-      subnet_ids                    = module.vpc.private_subnets
-      vpc_id                        = module.vpc.vpc_id
+      subnet_ids                    = module.carshub_vpc.private_subnets
+      vpc_id                        = module.carshub_vpc.vpc_id
       availability_zone_rebalancing = "ENABLED"
     }
   }
@@ -1160,9 +1158,9 @@ module "carshub_frontend_ecs" {
 
   security_groups = [module.carshub_ecs_frontend_sg.id]
   subnets = [
-    module.carshub_private_subnets.subnets[0].id,
-    module.carshub_private_subnets.subnets[1].id,
-    module.carshub_private_subnets.subnets[2].id
+    module.carshub_vpc.private_subnets[0],
+    module.carshub_vpc.private_subnets[1],
+    module.carshub_vpc.private_subnets[2]
   ]
   assign_public_ip = false
 }
@@ -1269,9 +1267,9 @@ module "carshub_backend_ecs" {
 
   security_groups = [module.carshub_ecs_backend_sg.id]
   subnets = [
-    module.carshub_private_subnets.subnets[0].id,
-    module.carshub_private_subnets.subnets[1].id,
-    module.carshub_private_subnets.subnets[2].id
+    module.carshub_vpc.private_subnets[0],
+    module.carshub_vpc.private_subnets[1],
+    module.carshub_vpc.private_subnets[2]
   ]
   assign_public_ip = false
 }
