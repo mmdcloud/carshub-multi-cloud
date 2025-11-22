@@ -5,269 +5,179 @@ data "vault_generic_secret" "rds" {
 
 data "aws_caller_identity" "current" {}
 
+data "aws_ssm_parameter" "ecs_optimized_ami" {
+  name = "/aws/service/ecs/optimized-ami/amazon-linux-2023/recommended"
+}
+
+data "aws_ssm_parameter" "fluentbit" {
+  name = "/aws/service/aws-for-fluent-bit/stable"
+}
+
 # -----------------------------------------------------------------------------------------
 # VPC Configuration
 # -----------------------------------------------------------------------------------------
 module "carshub_vpc" {
-  source                = "../../../modules/vpc/vpc"
-  vpc_name              = "carshub-vpc-${var.env}-${var.region}"
-  vpc_cidr_block        = "10.0.0.0/16"
-  enable_dns_hostnames  = true
-  enable_dns_support    = true
-  internet_gateway_name = "carshub-vpc-igw-${var.env}-${var.region}"
+  source                  = "../../../modules/networking/aws-vpc"
+  vpc_name                = "carshub-vpc-${var.env}-${var.region}"
+  vpc_cidr                = "10.0.0.0/16"
+  azs                     = var.azs
+  public_subnets          = var.public_subnets
+  private_subnets         = var.private_subnets
+  enable_dns_hostnames    = true
+  enable_dns_support      = true
+  create_igw              = true
+  map_public_ip_on_launch = true
+  enable_nat_gateway      = true
+  single_nat_gateway      = false
+  one_nat_gateway_per_az  = true
+  tags = {
+    Environment = "${var.env}"
+    Project     = "carshub"
+  }
 }
 
 # Security Group
-module "carshub_frontend_lb_sg" {
-  source = "../../../modules/vpc/security_groups"
-  vpc_id = module.carshub_vpc.vpc_id
+resource "aws_security_group" "carshub_frontend_lb_sg" {
   name   = "carshub-frontend-lb-sg-${var.env}-${var.region}"
-  ingress = [
-    {
-      from_port       = 80
-      to_port         = 80
-      protocol        = "tcp"
-      self            = "false"
-      cidr_blocks     = ["0.0.0.0/0"]
-      security_groups = []
-      description     = "HTTP traffic"
-    },
-    {
-      from_port       = 443
-      to_port         = 443
-      protocol        = "tcp"
-      self            = "false"
-      cidr_blocks     = ["0.0.0.0/0"]
-      security_groups = []
-      description     = "HTTPS traffic"
-    }
-  ]
-  egress = [
-    {
-      from_port   = 0
-      to_port     = 0
-      protocol    = "-1"
-      cidr_blocks = ["0.0.0.0/0"]
-    }
-  ]
+  vpc_id = module.carshub_vpc.vpc_id
+
+  ingress {
+    description = "HTTP traffic"
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "HTTPS traffic"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "carshub-frontend-lb-sg-${var.env}-${var.region}"
+  }
 }
 
-module "carshub_backend_lb_sg" {
-  source = "../../../modules/vpc/security_groups"
-  vpc_id = module.carshub_vpc.vpc_id
+resource "aws_security_group" "carshub_backend_lb_sg" {
   name   = "carshub-backend-lb-sg-${var.env}-${var.region}"
-  ingress = [
-    {
-      from_port       = 80
-      to_port         = 80
-      protocol        = "tcp"
-      self            = "false"
-      cidr_blocks     = ["0.0.0.0/0"]
-      security_groups = []
-      description     = "any"
-    },
-    {
-      from_port       = 443
-      to_port         = 443
-      protocol        = "tcp"
-      self            = "false"
-      cidr_blocks     = ["0.0.0.0/0"]
-      security_groups = []
-      description     = "HTTPS traffic"
-    }
-  ]
-  egress = [
-    {
-      from_port   = 0
-      to_port     = 0
-      protocol    = "-1"
-      cidr_blocks = ["0.0.0.0/0"]
-    }
-  ]
+  vpc_id = module.carshub_vpc.vpc_id
+
+  ingress {
+    description = "HTTP traffic"
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "HTTPS traffic"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "carshub-backend-lb-sg-${var.env}-${var.region}"
+  }
 }
 
-module "carshub_ecs_frontend_sg" {
-  source = "../../../modules/vpc/security_groups"
-  vpc_id = module.carshub_vpc.vpc_id
+resource "aws_security_group" "carshub_ecs_frontend_sg" {
   name   = "carshub-ecs-frontend-sg-${var.env}-${var.region}"
-  ingress = [
-    {
-      from_port       = 3000
-      to_port         = 3000
-      protocol        = "tcp"
-      self            = "false"
-      cidr_blocks     = []
-      security_groups = [module.carshub_frontend_lb_sg.id]
-      description     = "any"
-    }
-  ]
-  egress = [
-    {
-      from_port   = 0
-      to_port     = 0
-      protocol    = "-1"
-      cidr_blocks = ["0.0.0.0/0"]
-    }
-  ]
+  vpc_id = module.carshub_vpc.vpc_id
+
+  ingress {
+    from_port       = 3000
+    to_port         = 3000
+    protocol        = "tcp"
+    cidr_blocks     = []
+    security_groups = [aws_security_group.carshub_frontend_lb_sg.id]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "carshub-ecs-frontend-sg-${var.env}-${var.region}"
+  }
 }
 
-module "carshub_ecs_backend_sg" {
-  source = "../../../modules/vpc/security_groups"
-  vpc_id = module.carshub_vpc.vpc_id
+resource "aws_security_group" "carshub_ecs_backend_sg" {
   name   = "carshub-ecs-backend-sg-${var.env}-${var.region}"
-  ingress = [
-    {
-      from_port       = 80
-      to_port         = 80
-      protocol        = "tcp"
-      self            = "false"
-      cidr_blocks     = []
-      security_groups = [module.carshub_backend_lb_sg.id]
-      description     = "any"
-    }
-  ]
-  egress = [
-    {
-      from_port   = 0
-      to_port     = 0
-      protocol    = "-1"
-      cidr_blocks = ["0.0.0.0/0"]
-    }
-  ]
+  vpc_id = module.carshub_vpc.vpc_id
+
+  ingress {
+    from_port       = 80
+    to_port         = 80
+    protocol        = "tcp"
+    cidr_blocks     = []
+    security_groups = [aws_security_group.carshub_backend_lb_sg.id]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "carshub-ecs-backend-sg-${var.env}-${var.region}"
+  }
 }
 
-# RDS Security Group
-module "carshub_rds_sg" {
-  source = "../../../modules/vpc/security_groups"
-  vpc_id = module.carshub_vpc.vpc_id
+resource "aws_security_group" "carshub_rds_sg" {
   name   = "carshub-rds-sg-${var.env}-${var.region}"
-  ingress = [
-    {
-      from_port       = 3306
-      to_port         = 3306
-      protocol        = "tcp"
-      self            = "false"
-      cidr_blocks     = []
-      security_groups = [module.carshub_ecs_backend_sg.id]
-      description     = "any"
-    }
-  ]
-  egress = [
-    {
-      from_port   = 0
-      to_port     = 0
-      protocol    = "-1"
-      cidr_blocks = ["0.0.0.0/0"]
-    }
-  ]
-}
-
-# Public Subnets
-module "carshub_public_subnets" {
-  source = "../../../modules/vpc/subnets"
-  name   = "carshub-public-subnet-${var.env}-${var.region}"
-  subnets = [
-    {
-      subnet = "10.0.1.0/24"
-      az     = "${var.region}a"
-    },
-    {
-      subnet = "10.0.2.0/24"
-      az     = "${var.region}b"
-    },
-    {
-      subnet = "10.0.3.0/24"
-      az     = "${var.region}c"
-    }
-  ]
-  vpc_id                  = module.carshub_vpc.vpc_id
-  map_public_ip_on_launch = true
-}
-
-# Private Subnets
-module "carshub_private_subnets" {
-  source = "../../../modules/vpc/subnets"
-  name   = "carshub-private-subnet-${var.env}-${var.region}"
-  subnets = [
-    {
-      subnet = "10.0.6.0/24"
-      az     = "${var.region}a"
-    },
-    {
-      subnet = "10.0.5.0/24"
-      az     = "${var.region}b"
-    },
-    {
-      subnet = "10.0.4.0/24"
-      az     = "${var.region}c"
-    }
-  ]
-  vpc_id                  = module.carshub_vpc.vpc_id
-  map_public_ip_on_launch = false
-}
-
-# Carshub Public Route Table
-module "carshub_public_rt" {
-  source  = "../../../modules/vpc/route_tables"
-  name    = "carshub-public-route-table-${var.env}-${var.region}"
-  subnets = module.carshub_public_subnets.subnets[*]
-  routes = [
-    {
-      cidr_block     = "0.0.0.0/0"
-      gateway_id     = module.carshub_vpc.igw_id
-      nat_gateway_id = ""
-    }
-  ]
-  vpc_id = module.carshub_vpc.vpc_id
-}
-
-resource "aws_eip" "carshub_nat_eip" {
-  count  = length(module.carshub_public_subnets.subnets)
-  domain = "vpc"
-
-  tags = {
-    Name = "carshub-nat-eip-${count.index + 1}"
-  }
-}
-
-# NAT Gateways (one per AZ)
-resource "aws_nat_gateway" "carshub_vpc_nat" {
-  count = length(module.carshub_public_subnets.subnets)
-
-  allocation_id = aws_eip.carshub_nat_eip[count.index].id
-  subnet_id     = module.carshub_public_subnets.subnets[count.index].id
-
-  tags = {
-    Name = "carshub-nat-gateway-${count.index + 1}-${var.env}-${var.region}"
-  }
-}
-
-resource "aws_route_table" "carshub_private_rt" {
-  count  = length(aws_nat_gateway.carshub_vpc_nat)
   vpc_id = module.carshub_vpc.vpc_id
 
-  route {
-    cidr_block     = "0.0.0.0/0"
-    nat_gateway_id = aws_nat_gateway.carshub_vpc_nat[count.index].id
+  ingress {
+    from_port       = 3306
+    to_port         = 3306
+    protocol        = "tcp"
+    cidr_blocks     = []
+    security_groups = [aws_security_group.carshub_ecs_backend_sg.id]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
   tags = {
-    Name = "carshub-private-route-table-${count.index + 1}-${var.env}-${var.region}"
+    Name = "carshub-rds-sg-${var.env}-${var.region}"
   }
-}
-
-resource "aws_route_table_association" "carshub_private_rt_association" {
-  count          = length(module.carshub_private_subnets.subnets)
-  subnet_id      = module.carshub_private_subnets.subnets[count.index].id
-  route_table_id = aws_route_table.carshub_private_rt[count.index].id
 }
 
 # -----------------------------------------------------------------------------------------
 # Secrets Manager
 # -----------------------------------------------------------------------------------------
-
 module "carshub_db_credentials" {
-  source                  = "../../../modules/secrets-manager"
+  source                  = "../../../modules/security/aws-secrets-manager"
   name                    = "carshub-rds-secrets-${var.env}-${var.region}"
   description             = "Secret for storing RDS credentials"
   recovery_window_in_days = 0
@@ -280,8 +190,6 @@ module "carshub_db_credentials" {
 # -----------------------------------------------------------------------------------------
 # VPC Flow Logs
 # -----------------------------------------------------------------------------------------
-
-# IAM Role for VPC Flow Logs
 module "flow_logs_role" {
   source             = "../../../modules/iam"
   role_name          = "carshub-flow-logs-role-${var.env}-${var.region}"
@@ -339,10 +247,8 @@ resource "aws_flow_log" "carshub_vpc_flow_log" {
 # -----------------------------------------------------------------------------------------
 # ECR Module
 # -----------------------------------------------------------------------------------------
-
-# Frontend Repo
 module "carshub_frontend_container_registry" {
-  source               = "../../../modules/ecr"
+  source               = "../../../modules/storage/aws-ecr"
   force_delete         = true
   scan_on_push         = false
   image_tag_mutability = "IMMUTABLE"
@@ -350,9 +256,8 @@ module "carshub_frontend_container_registry" {
   name                 = "carshub-frontend-${var.env}-${var.region}"
 }
 
-# 2. Backend Repo
 module "carshub_backend_container_registry" {
-  source               = "../../../modules/ecr"
+  source               = "../../../modules/storage/aws-ecr"
   force_delete         = true
   scan_on_push         = false
   image_tag_mutability = "IMMUTABLE"
@@ -363,11 +268,8 @@ module "carshub_backend_container_registry" {
 # -----------------------------------------------------------------------------------------
 # RDS Instance
 # -----------------------------------------------------------------------------------------
-
-# IAM Role for Enhanced Monitoring
 resource "aws_iam_role" "rds_monitoring_role" {
   name = "carshub-rds-monitoring-role-${var.env}-${var.region}"
-
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -387,10 +289,9 @@ resource "aws_iam_role_policy_attachment" "rds_monitoring_policy" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonRDSEnhancedMonitoringRole"
 }
 
-
 module "carshub_db" {
-  source                          = "../../../modules/rds"
-  db_name                         = "carshubdb${var.env}useast1"
+  source                          = "../../../modules/database/aws-rds"
+  db_name                         = "carshubdb${var.env}${var.region}"
   allocated_storage               = 100
   storage_type                    = "gp3"
   engine                          = "mysql"
@@ -404,9 +305,9 @@ module "carshub_db" {
   backup_retention_period         = 35
   backup_window                   = "03:00-06:00"
   subnet_group_ids = [
-    module.carshub_private_subnets.subnets[0].id,
-    module.carshub_private_subnets.subnets[1].id,
-    module.carshub_private_subnets.subnets[2].id
+    module.carshub_vpc.private_subnets[0],
+    module.carshub_vpc.private_subnets[1],
+    module.carshub_vpc.private_subnets[2]
   ]
   vpc_security_group_ids                = [module.carshub_rds_sg.id]
   publicly_accessible                   = false
@@ -438,9 +339,8 @@ module "carshub_db" {
 # -----------------------------------------------------------------------------------------
 # S3 Configuration
 # -----------------------------------------------------------------------------------------
-
 module "carshub_media_bucket" {
-  source      = "../../../modules/s3"
+  source      = "../../../modules/storage/aws-s3"
   bucket_name = "carshub-media-bucket${var.env}-${var.region}"
   objects = [
     {
@@ -502,7 +402,7 @@ module "carshub_media_bucket" {
 }
 
 module "carshub_media_update_function_code" {
-  source      = "../../../modules/s3"
+  source      = "../../../modules/storage/aws-s3"
   bucket_name = "carshub-media-updatefunctioncode${var.env}-${var.region}"
   objects = [
     {
@@ -523,12 +423,57 @@ module "carshub_media_update_function_code" {
   force_destroy      = true
 }
 
+module "carshub_frontend_lb_logs" {
+  source        = "../../../modules/storage/aws-s3"
+  bucket_name   = "carshub-frontend-lb-logs-${var.env}-${var.region}"
+  objects       = []
+  bucket_policy = ""
+  cors = [
+    {
+      allowed_headers = ["*"]
+      allowed_methods = ["GET"]
+      allowed_origins = ["*"]
+      max_age_seconds = 3000
+    },
+    {
+      allowed_headers = ["*"]
+      allowed_methods = ["PUT"]
+      allowed_origins = ["*"]
+      max_age_seconds = 3000
+    }
+  ]
+  versioning_enabled = "Enabled"
+  force_destroy      = true
+}
+
+module "carshub_backend_lb_logs" {
+  source        = "../../../modules/storage/aws-s3"
+  bucket_name   = "carshub-backend-lb-logs-${var.env}-${var.region}"
+  objects       = []
+  bucket_policy = ""
+  cors = [
+    {
+      allowed_headers = ["*"]
+      allowed_methods = ["GET"]
+      allowed_origins = ["*"]
+      max_age_seconds = 3000
+    },
+    {
+      allowed_headers = ["*"]
+      allowed_methods = ["PUT"]
+      allowed_origins = ["*"]
+      max_age_seconds = 3000
+    }
+  ]
+  versioning_enabled = "Enabled"
+  force_destroy      = true
+}
+
 # -----------------------------------------------------------------------------------------
 # Signing Profile
 # -----------------------------------------------------------------------------------------
-
 module "carshub_media_update_function_code_signed" {
-  source             = "../../../modules/s3"
+  source             = "../../../modules/storage/aws-s3"
   bucket_name        = "carshub-media-update-function-code-signed${var.env}-${var.region}"
   versioning_enabled = "Enabled"
   force_destroy      = true
@@ -560,7 +505,6 @@ module "carshub_signing_profile" {
 # -----------------------------------------------------------------------------------------
 # SQS Config
 # -----------------------------------------------------------------------------------------
-
 resource "aws_lambda_event_source_mapping" "sqs_event_trigger" {
   event_source_arn                   = module.carshub_media_events_queue.arn
   function_name                      = module.carshub_media_update_function.arn
@@ -571,7 +515,7 @@ resource "aws_lambda_event_source_mapping" "sqs_event_trigger" {
 
 # SQS Queue for buffering S3 events
 module "carshub_media_events_queue" {
-  source                        = "../../../modules/sqs"
+  source                        = "../../../modules/integration/aws-sqs"
   queue_name                    = "carshub-media-events-queue-${var.env}-${var.region}"
   delay_seconds                 = 0
   maxReceiveCount               = 3
@@ -602,7 +546,6 @@ module "carshub_media_events_queue" {
 # -----------------------------------------------------------------------------------------
 # Lambda Config
 # -----------------------------------------------------------------------------------------
-
 module "carshub_media_update_function_iam_role" {
   source             = "../../../modules/iam"
   role_name          = "carshub-media-update-function-iam-role-${var.env}-${var.region}"
@@ -670,7 +613,7 @@ resource "aws_lambda_layer_version" "python_layer" {
 
 # Lambda function to update media metadata in RDS database
 module "carshub_media_update_function" {
-  source        = "../../../modules/lambda"
+  source        = "../../../modules/compute/aws-lambda"
   function_name = "carshub-media-update-${var.env}-${var.region}"
   role_arn      = module.carshub_media_update_function_iam_role.arn
   permissions   = []
@@ -691,9 +634,8 @@ module "carshub_media_update_function" {
 # -----------------------------------------------------------------------------------------
 # Cloudfront distribution
 # -----------------------------------------------------------------------------------------
-
 module "carshub_media_cloudfront_distribution" {
-  source                                = "../../../modules/cloudfront"
+  source                                = "../../../modules/networking/aws-cloudfront"
   distribution_name                     = "carshub-media-cdn-${var.env}-${var.region}"
   oac_name                              = "carshub-media-cdn-oac-${var.env}-${var.region}"
   oac_description                       = "carshub-media-cdn-oac-${var.env}-${var.region}"
@@ -728,124 +670,323 @@ module "carshub_media_cloudfront_distribution" {
 # -----------------------------------------------------------------------------------------
 # Load Balancer Configuration
 # -----------------------------------------------------------------------------------------
-# Frontend Load Balancer
 module "carshub_frontend_lb" {
-  source                     = "../../../modules/load-balancer"
-  lb_name                    = "frontend-lb-${var.env}-${var.region}"
-  lb_is_internal             = false
-  lb_ip_address_type         = "ipv4"
+  source                     = "terraform-aws-modules/alb/aws"
+  name                       = "carshub-frontend-lb-${var.env}-${var.region}"
   load_balancer_type         = "application"
-  drop_invalid_header_fields = true
+  vpc_id                     = module.carshub_vpc.vpc_id
+  subnets                    = module.carshub_vpc.public_subnets
   enable_deletion_protection = false
-  security_groups            = [module.carshub_frontend_lb_sg.id]
-  subnets                    = module.carshub_public_subnets.subnets[*].id
-  target_groups = [
-    {
-      target_group_name      = "frontend-tg-${var.env}-${var.region}"
-      target_port            = 3000
-      target_ip_address_type = "ipv4"
-      target_protocol        = "HTTP"
-      target_type            = "ip"
-      target_vpc_id          = module.carshub_vpc.vpc_id
-
-      health_check_interval            = 30
-      health_check_path                = "/auth/signin"
-      health_check_enabled             = true
-      health_check_protocol            = "HTTP"
-      health_check_timeout             = 5
-      health_check_healthy_threshold   = 3
-      health_check_unhealthy_threshold = 3
-      health_check_port                = 3000
-
+  drop_invalid_header_fields = true
+  ip_address_type            = "ipv4"
+  internal                   = false
+  security_groups = [
+    aws_security_group.frontend_lb_sg.id
+  ]
+  access_logs = {
+    bucket = "${module.carshub_frontend_lb_logs.bucket}"
+  }
+  listeners = {
+    carshub_frontend_lb_http_listener = {
+      port     = 80
+      protocol = "HTTP"
+      forward = {
+        target_group_key = "carshub_frontend_lb_target_group"
+      }
     }
-  ]
-  listeners = [
-    {
-      listener_port     = 80
-      listener_protocol = "HTTP"
-      certificate_arn   = null
-      default_actions = [
-        {
-          type             = "forward"
-          target_group_arn = module.carshub_frontend_lb.target_groups[0].arn
-        }
-      ]
-    },
-    # TODO : Uncomment this while using HTTPS
-    # {
-    #   listener_port     = 443
-    #   listener_protocol = "HTTPS"
-    #   certificate_arn   = aws_acm_certificate.frontend_cert.arn
-    #   default_actions = [
-    #     {
-    #       type             = "forward"
-    #       target_group_arn = module.carshub_frontend_lb.target_groups[0].arn
-    #     }
-    #   ]
-    # }
-  ]
+  }
+  target_groups = {
+    carshub_frontend_lb_target_group = {
+      backend_protocol = "HTTP"
+      backend_port     = 3000
+      target_type      = "ip"
+      health_check = {
+        enabled             = true
+        healthy_threshold   = 3
+        interval            = 30
+        path                = "/auth/signin"
+        port                = 3000
+        protocol            = "HTTP"
+        unhealthy_threshold = 3
+      }
+      create_attachment = false
+    }
+  }
+  tags = {
+    Project = "carshub"
+  }
 }
 
-# Backend Load Balancer
 module "carshub_backend_lb" {
-  source                     = "../../../modules/load-balancer"
-  lb_name                    = "backend-lb-${var.env}-${var.region}"
-  lb_is_internal             = false
-  lb_ip_address_type         = "ipv4"
+  source                     = "terraform-aws-modules/alb/aws"
+  name                       = "carshub-backend-lb-${var.env}-${var.region}"
   load_balancer_type         = "application"
+  vpc_id                     = module.carshub_vpc.vpc_id
+  subnets                    = module.carshub_vpc.public_subnets
   enable_deletion_protection = false
   drop_invalid_header_fields = true
-  security_groups            = [module.carshub_backend_lb_sg.id]
-  subnets                    = module.carshub_public_subnets.subnets[*].id
-  target_groups = [
-    {
-      target_group_name      = "backend-tg-${var.env}-${var.region}"
-      target_port            = 80
-      target_ip_address_type = "ipv4"
-      target_protocol        = "HTTP"
-      target_type            = "ip"
-      target_vpc_id          = module.carshub_vpc.vpc_id
-
-      health_check_interval            = 30
-      health_check_path                = "/"
-      health_check_enabled             = true
-      health_check_protocol            = "HTTP"
-      health_check_timeout             = 5
-      health_check_healthy_threshold   = 3
-      health_check_unhealthy_threshold = 3
-      health_check_port                = 80
+  ip_address_type            = "ipv4"
+  internal                   = false
+  security_groups = [
+    aws_security_group.backend_lb_sg.id
+  ]
+  access_logs = {
+    bucket = "${module.carshub_backend_lb_logs.bucket}"
+  }
+  listeners = {
+    carshub_backend_lb_http_listener = {
+      port     = 80
+      protocol = "HTTP"
+      forward = {
+        target_group_key = "carshub_backend_lb_target_group"
+      }
     }
-  ]
-  listeners = [
-    {
-      listener_port     = 80
-      listener_protocol = "HTTP"
-      certificate_arn   = null
-      default_actions = [
-        {
-          type             = "forward"
-          target_group_arn = module.carshub_backend_lb.target_groups[0].arn
-        }
-      ]
-    },
-    # TODO : Uncomment this while using HTTPS
-    # {
-    #   listener_port     = 443
-    #   listener_protocol = "HTTPS"
-    #   certificate_arn   = aws_acm_certificate.frontend_cert.arn
-    #   default_actions = [
-    #     {
-    #       type             = "forward"
-    #       target_group_arn = module.carshub_frontend_lb.target_groups[0].arn
-    #     }
-    #   ]
-    # }
-  ]
+  }
+  target_groups = {
+    carshub_backend_lb_target_group = {
+      backend_protocol = "HTTP"
+      backend_port     = 80
+      target_type      = "ip"
+      health_check = {
+        enabled             = true
+        healthy_threshold   = 3
+        interval            = 30
+        path                = "/"
+        port                = 80
+        protocol            = "HTTP"
+        unhealthy_threshold = 3
+      }
+      create_attachment = false
+    }
+  }
+  tags = {
+    Project = "carshub"
+  }
 }
 
 # -----------------------------------------------------------------------------------------
 # ECS Configuration
 # -----------------------------------------------------------------------------------------
+module "ecs" {
+  source       = "terraform-aws-modules/ecs/aws"
+  cluster_name = "text-to-sql-cluster"
+  default_capacity_provider_strategy = {
+    FARGATE = {
+      weight = 50
+      base   = 20
+    }
+    FARGATE_SPOT = {
+      weight = 50
+    }
+  }
+  autoscaling_capacity_providers = {
+    ASG = {
+      auto_scaling_group_arn         = module.autoscaling.autoscaling_group_arn
+      managed_draining               = "ENABLED"
+      managed_termination_protection = "ENABLED"
+      managed_scaling = {
+        maximum_scaling_step_size = 5
+        minimum_scaling_step_size = 1
+        status                    = "ENABLED"
+        target_capacity           = 60
+      }
+    }
+  }
+
+  services = {
+    ecs-frontend = {
+      cpu    = 1024
+      memory = 4096
+      # Container definition(s)
+      container_definitions = {
+        fluent-bit = {
+          cpu       = 512
+          memory    = 1024
+          essential = true
+          image     = nonsensitive(data.aws_ssm_parameter.fluentbit.value)
+          user      = "0"
+          firelensConfiguration = {
+            type = "fluentbit"
+          }
+          memoryReservation                      = 50
+          cloudwatch_log_group_retention_in_days = 30
+        }
+
+        ecs_frontend = {
+          cpu       = 1024
+          memory    = 2048
+          essential = true
+          image     = "${module.carshub_frontend_container_registry.repository_url}:latest"
+          placementStrategy = [
+            {
+              type  = "spread",
+              field = "attribute:ecs.availability-zone"
+            }
+          ]
+          healthCheck = {
+            command = ["CMD-SHELL", "curl -f http://localhost:3000/auth/signin || exit 1"]
+          }
+          ulimits = [
+            {
+              name      = "nofile"
+              softLimit = 65536
+              hardLimit = 65536
+            }
+          ]
+          portMappings = [
+            {
+              name          = "ecs-frontend"
+              containerPort = 3000
+              hostPort      = 3000
+              protocol      = "tcp"
+            }
+          ]
+          environment = [
+            {
+              name  = "BASE_URL"
+              value = "${module.backend_lb.dns_name}"
+            }
+          ]
+          capacity_provider_strategy = {
+            ASG = {
+              base              = 20
+              capacity_provider = "ASG"
+              weight            = 50
+            }
+          }
+          readonlyRootFilesystem = false
+          dependsOn = [{
+            containerName = "fluent-bit"
+            condition     = "START"
+          }]
+          enable_cloudwatch_logging = false
+          logConfiguration = {
+            logDriver = "awsfirelens"
+            options = {
+              Name                    = "firehose"
+              region                  = var.region
+              delivery_stream         = "carshub-ecs-frontend-stream"
+              log-driver-buffer-limit = "2097152"
+            }
+          }
+          memoryReservation = 100
+          restartPolicy = {
+            enabled              = true
+            ignoredExitCodes     = [1]
+            restartAttemptPeriod = 60
+          }
+        }
+      }
+      load_balancer = {
+        service = {
+          target_group_arn = module.carshub_frontend_lb.target_groups["carshub_frontend_lb_target_group"].arn
+          container_name   = "ecs-frontend"
+          container_port   = 3000
+        }
+      }
+      subnet_ids                    = module.carshub_vpc.private_subnets
+      vpc_id                        = module.carshub_vpc.vpc_id
+      availability_zone_rebalancing = "ENABLED"
+    }
+
+    ecs-backend = {
+      cpu    = 1024
+      memory = 4096
+      container_definitions = {
+        fluent-bit = {
+          cpu       = 512
+          memory    = 1024
+          essential = true
+          image     = nonsensitive(data.aws_ssm_parameter.fluentbit.value)
+          user      = "0"
+          firelensConfiguration = {
+            type = "fluentbit"
+          }
+          memoryReservation                      = 50
+          cloudwatch_log_group_retention_in_days = 30
+        }
+        ecs_backend = {
+          cpu       = 1024
+          memory    = 2048
+          essential = true
+          image     = "${module.carshub_backend_container_registry.repository_url}:latest"
+          placementStrategy = [
+            {
+              type  = "spread",
+              field = "attribute:ecs.availability-zone"
+            }
+          ]
+          healthCheck = {
+            command = ["CMD-SHELL", "curl -f http://localhost:80 || exit 1"]
+          }
+          ulimits = [
+            {
+              name      = "nofile"
+              softLimit = 65536
+              hardLimit = 65536
+            }
+          ]
+          environment = [
+            {
+              name  = "DB_PATH"
+              value = "${tostring(split(":", module.db.endpoint)[0])}"
+            },
+            {
+              name  = "DB_NAME"
+              value = "${module.db.name}"
+            }
+          ]
+          portMappings = [
+            {
+              name          = "ecs-backend"
+              containerPort = 80
+              hostPort      = 80
+              protocol      = "tcp"
+            }
+          ]
+          capacity_provider_strategy = {
+            ASG = {
+              base              = 20
+              capacity_provider = "ASG"
+              weight            = 50
+            }
+          }
+          readOnlyRootFilesystem = false
+          dependsOn = [{
+            containerName = "fluent-bit"
+            condition     = "START"
+          }]
+          enable_cloudwatch_logging = false
+          logConfiguration = {
+            logDriver = "awsfirelens"
+            options = {
+              Name                    = "firehose"
+              region                  = var.region
+              delivery_stream         = "carshub-ecs-backend-stream"
+              log-driver-buffer-limit = "2097152"
+            }
+          }
+          memoryReservation = 100
+          restartPolicy = {
+            enabled              = true
+            ignoredExitCodes     = [1]
+            restartAttemptPeriod = 60
+          }
+        }
+      }
+      load_balancer = {
+        service = {
+          target_group_arn = module.carshub_backend_lb.target_groups["carshub_backend_lb_target_group"].arn
+          container_name   = "ecs-backend"
+          container_port   = 80
+        }
+      }
+      subnet_ids                    = module.carshub_vpc.private_subnets
+      vpc_id                        = module.carshub_vpc.vpc_id
+      availability_zone_rebalancing = "ENABLED"
+    }
+  }
+}
 
 resource "aws_ecs_cluster" "carshub_cluster" {
   name = "carshub-cluster-${var.env}-${var.region}"
@@ -1017,9 +1158,9 @@ module "carshub_frontend_ecs" {
 
   security_groups = [module.carshub_ecs_frontend_sg.id]
   subnets = [
-    module.carshub_private_subnets.subnets[0].id,
-    module.carshub_private_subnets.subnets[1].id,
-    module.carshub_private_subnets.subnets[2].id
+    module.carshub_vpc.private_subnets[0],
+    module.carshub_vpc.private_subnets[1],
+    module.carshub_vpc.private_subnets[2]
   ]
   assign_public_ip = false
 }
@@ -1126,9 +1267,9 @@ module "carshub_backend_ecs" {
 
   security_groups = [module.carshub_ecs_backend_sg.id]
   subnets = [
-    module.carshub_private_subnets.subnets[0].id,
-    module.carshub_private_subnets.subnets[1].id,
-    module.carshub_private_subnets.subnets[2].id
+    module.carshub_vpc.private_subnets[0],
+    module.carshub_vpc.private_subnets[1],
+    module.carshub_vpc.private_subnets[2]
   ]
   assign_public_ip = false
 }
@@ -1194,7 +1335,6 @@ module "carshub_backend_app_autoscaling_policy" {
 # -----------------------------------------------------------------------------------------
 # Cloudwath Alarm Configuration
 # -----------------------------------------------------------------------------------------
-
 module "carshub_alarm_notifications" {
   source     = "../../../modules/sns"
   topic_name = "carshub-cloudwatch-alarm-notification-topic-${var.env}-${var.region}"
@@ -1598,7 +1738,6 @@ module "rds_high_connections" {
 # -----------------------------------------------------------------------------------------
 # CodeBuild Configuration
 # -----------------------------------------------------------------------------------------
-
 module "codebuild_cache_bucket" {
   source        = "../../../modules/s3"
   bucket_name   = "codebuild-cache-bucket-${var.env}-${var.region}"
